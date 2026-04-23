@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>How Claude Uses RAG: A Deep Dive</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;1,8..60,300&display=swap');
+
+  :root {
+    --ink: #1a1208;
+    --muted: #6b5e47;
+    --accent: #c8622a;
+    --accent2: #3a6b5c;
+    --bg: #faf7f2;
+    --card: #f3ede3;
+    --border: #ddd3c0;
+    --code-bg: #1e1a14;
+    --code-text: #e8dcc8;
+    --highlight: #fff3dc;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 19px;
+    line-height: 1.8;
+    padding: 0 16px 80px;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    max-width: 780px;
+    margin: 64px auto 56px;
+    position: relative;
+  }
+  .hero-tag {
+    font-family: 'Source Serif 4', serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 20px;
+  }
+  .hero h1 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: clamp(36px, 6vw, 62px);
+    font-weight: 700;
+    line-height: 1.12;
+    color: var(--ink);
+    margin-bottom: 28px;
+  }
+  .hero h1 em {
+    font-style: italic;
+    color: var(--accent);
+  }
+  .hero-subtitle {
+    font-size: 21px;
+    font-weight: 300;
+    color: var(--muted);
+    line-height: 1.6;
+    max-width: 620px;
+    margin-bottom: 36px;
+  }
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+  }
+  .avatar {
+    width: 44px; height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    font-family: 'Playfair Display', serif;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .byline-meta { font-size: 14px; color: var(--muted); }
+  .byline-meta strong { color: var(--ink); display: block; font-size: 15px; }
+
+  /* ── LAYOUT ── */
+  .content {
+    max-width: 780px;
+    margin: 0 auto;
+  }
+
+  /* ── TYPOGRAPHY ── */
+  h2 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: clamp(24px, 4vw, 34px);
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--ink);
+    margin: 56px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border);
+  }
+  h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 22px;
+    font-weight: 400;
+    font-style: italic;
+    color: var(--accent2);
+    margin: 36px 0 14px;
+  }
+  p { margin-bottom: 22px; }
+  strong { color: var(--ink); font-weight: 600; }
+
+  /* ── PULL QUOTE ── */
+  .pull-quote {
+    margin: 40px 0;
+    padding: 28px 36px;
+    border-left: 4px solid var(--accent);
+    background: var(--highlight);
+    border-radius: 0 8px 8px 0;
+    font-family: 'Playfair Display', serif;
+    font-size: 22px;
+    font-style: italic;
+    color: var(--ink);
+    line-height: 1.5;
+  }
+
+  /* ── CALLOUT BOX ── */
+  .callout {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin: 32px 0;
+    font-size: 17px;
+    line-height: 1.7;
+  }
+  .callout-title {
+    font-family: 'Source Serif 4', serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--accent2);
+    margin-bottom: 10px;
+  }
+
+  /* ── STAT CARDS ── */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 16px;
+    margin: 36px 0;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 20px;
+    text-align: center;
+  }
+  .stat-number {
+    font-family: 'Playfair Display', serif;
+    font-size: 44px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  /* ── PIPELINE ── */
+  .pipeline {
+    margin: 36px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .pipeline-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+  .pipeline-step:last-child { border-bottom: none; }
+  .step-num {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-family: 'Playfair Display', serif;
+    font-size: 16px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-content strong {
+    display: block;
+    font-size: 17px;
+    margin-bottom: 4px;
+  }
+  .step-content p { margin: 0; font-size: 16px; color: var(--muted); }
+
+  /* ── CODE BLOCK ── */
+  .code-wrap {
+    margin: 28px 0;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #2e2820;
+  }
+  .code-label {
+    background: #2e2820;
+    color: #a09070;
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 8px 18px;
+    font-family: 'Courier New', monospace;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 22px 22px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 0;
+  }
+  .kw { color: #e08060; }
+  .str { color: #a0d080; }
+  .cm { color: #7a6e5a; font-style: italic; }
+  .fn { color: #80c0e0; }
+
+  /* ── COMPARISON TABLE ── */
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 32px 0;
+  }
+  .compare-col {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px;
+  }
+  .compare-col.better { border-color: var(--accent2); }
+  .compare-col h4 {
+    font-family: 'Source Serif 4', serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .compare-col.better h4 { color: var(--accent2); }
+  .compare-col ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .compare-col ul li {
+    font-size: 15px;
+    line-height: 1.5;
+    padding-left: 20px;
+    position: relative;
+    color: var(--muted);
+  }
+  .compare-col ul li::before {
+    content: '✗';
+    position: absolute; left: 0;
+    color: #c06060;
+  }
+  .compare-col.better ul li { color: var(--ink); }
+  .compare-col.better ul li::before {
+    content: '✓';
+    color: var(--accent2);
+  }
+
+  /* ── SECTION DIVIDER ── */
+  .divider {
+    text-align: center;
+    margin: 52px 0;
+    color: var(--border);
+    letter-spacing: 12px;
+    font-size: 18px;
+  }
+
+  /* ── FOOTER TAG ── */
+  .tags {
+    margin-top: 60px;
+    padding-top: 28px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .tag {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  @media(max-width: 600px) {
+    .comparison { grid-template-columns: 1fr; }
+    .stat-row { grid-template-columns: 1fr 1fr; }
+    h2 { font-size: 26px; }
+    .pull-quote { font-size: 19px; padding: 20px 22px; }
+    pre { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-tag">Deep Dive · AI Engineering · RAG</div>
+  <h1>How <em>Claude</em> Uses RAG to Know What You Never Told It</h1>
+  <p class="hero-subtitle">A complete walkthrough of Retrieval-Augmented Generation — from basic chunking to Anthropic's breakthrough Contextual Retrieval technique — and why it changes everything.</p>
+  <div class="byline">
+    <div class="avatar">C</div>
+    <div class="byline-meta">
+      <strong>Based on Anthropic's Official API Course</strong>
+      RAG & Agentic Search Module · anthropic.skilljar.com
+    </div>
+  </div>
+</div>
+
+<div class="content">
+
+  <p>Imagine asking your AI assistant about a product return policy — and it confidently makes one up. That is the hallucination problem in a nutshell. Large language models like Claude know a tremendous amount, but they cannot know <em>your</em> business, <em>your</em> documents, or <em>your</em> internal knowledge base — unless you tell them.</p>
+
+  <p>That is where <strong>Retrieval-Augmented Generation (RAG)</strong> comes in. And Claude doesn't just support RAG — Anthropic has pushed the state of the art with a technique called <strong>Contextual Retrieval</strong> that dramatically reduces retrieval failures. Let's unpack every layer.</p>
+
+  <div class="pull-quote">"RAG is the bridge between a model's frozen training knowledge and the living, breathing world of your data."</div>
+
+  <h2>Why RAG Exists: The Context Window Problem</h2>
+
+  <p>Every Claude conversation happens within a <strong>context window</strong> — a finite amount of text the model can see at once. Claude's context is impressively large, but no context window can hold an entire company's documentation, a law firm's case archive, or a developer's full codebase.</p>
+
+  <div class="callout">
+    <div class="callout-title">💡 Quick Rule of Thumb</div>
+    If your knowledge base is <strong>under ~200,000 tokens</strong> (roughly 500 pages), you can simply paste the entire thing into the prompt. Claude's prompt caching feature makes this fast and affordable — reducing costs by up to 90%. But once your knowledge base grows beyond that, you need RAG.
+  </div>
+
+  <p>RAG solves this by retrieving only the <em>most relevant</em> fragments from a large knowledge base and injecting them into Claude's prompt at query time. The model never sees the full corpus — just the parts that matter most for the current question.</p>
+
+  <h2>Stage 1 — Text Chunking: Slicing the Knowledge Base</h2>
+
+  <p>Before anything can be retrieved, your documents must be broken into manageable pieces. This step is called <strong>chunking</strong>, and the strategy you choose has an outsized effect on downstream quality.</p>
+
+  <h3>Common Chunking Strategies</h3>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <strong>Fixed-size character splitting</strong>
+        <p>Split every N characters (e.g. 512). Simple and fast, but often cuts mid-sentence or mid-thought, destroying semantic coherence.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <strong>Sentence or paragraph splitting</strong>
+        <p>Respect natural language boundaries. Better coherence, but chunk sizes vary greatly, which can affect embedding quality.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <strong>Semantic chunking</strong>
+        <p>Group sentences by topic shift, detected via embedding similarity. Produces the most context-rich chunks but is computationally heavier.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <strong>Overlapping windows</strong>
+        <p>Add a sliding overlap (e.g., 50–100 token overlap between chunks) so no critical context sits exactly on a boundary split.</p>
+      </div>
+    </div>
+  </div>
+
+  <p>The Anthropic course emphasizes that there is no universally perfect chunk size — it depends on your content type, the embedding model you use, and how specific or broad user queries tend to be.</p>
+
+  <h2>Stage 2 — Text Embeddings: Meaning as Math</h2>
+
+  <p>Once you have chunks, each one is passed through an <strong>embedding model</strong> — a neural network that converts text into a dense vector of numbers. These vectors encode <em>semantic meaning</em>: chunks about similar topics land near each other in vector space, regardless of exact wording.</p>
+
+  <p>When a user asks a question, that question is also embedded into the same vector space. Retrieval then becomes a geometric problem: find the stored vectors closest to the query vector. This is <strong>semantic search</strong>, and it's what makes RAG feel intelligent rather than mechanical.</p>
+
+  <div class="callout">
+    <div class="callout-title">📐 Under the Hood</div>
+    Similarity is typically measured with <strong>cosine similarity</strong> — the cosine of the angle between two vectors. A score of 1.0 means identical meaning, 0.0 means totally unrelated. The top-K chunks with the highest scores are selected for the prompt.
+  </div>
+
+  <h2>Stage 3 — BM25: The Old Algorithm That Still Wins at Exact Matching</h2>
+
+  <p>Embedding-based semantic search is powerful, but it has a well-known weakness: <strong>exact keyword matching</strong>. If a user asks for "Error code TS-999," an embedding model might return results about error codes in general — while completely missing the specific chunk that contains the literal string "TS-999."</p>
+
+  <p>Enter <strong>BM25 (Best Matching 25)</strong>, a classic lexical ranking algorithm that operates on term frequency and inverse document frequency. It finds chunks that share the exact words of the query, making it ideal for:</p>
+
+  <p style="padding-left: 24px; border-left: 3px solid var(--border); color: var(--muted); font-style: italic;">Error codes · Product SKUs · Names and proper nouns · Legal citations · Technical identifiers</p>
+
+  <p>The course teaches a <strong>Multi-Index RAG pipeline</strong> that runs both searches in parallel — BM25 for lexical precision and embeddings for semantic breadth — then merges and deduplicates results using <strong>rank fusion</strong> before injecting them into the prompt. This hybrid approach consistently outperforms either method alone.</p>
+
+  <h2>The Context Conundrum — and Why Classic RAG Falls Short</h2>
+
+  <p>Here is a problem that trips up many RAG implementations. Consider this chunk extracted from an SEC filing:</p>
+
+  <div class="code-wrap">
+    <div class="code-label">Retrieved Chunk — Traditional RAG</div>
+    <pre>"The company's revenue grew by 3% over the previous quarter."</pre>
+  </div>
+
+  <p>Which company? Which quarter? The chunk, stripped of its surrounding document context, is nearly useless. This is the <strong>context conundrum</strong>: chunking sacrifices the very context that makes a piece of information meaningful.</p>
+
+  <div class="comparison">
+    <div class="compare-col">
+      <h4>Traditional RAG</h4>
+      <ul>
+        <li>Chunks lose document context</li>
+        <li>Ambiguous when read in isolation</li>
+        <li>Higher retrieval failure rate</li>
+        <li>More hallucination risk</li>
+      </ul>
+    </div>
+    <div class="compare-col better">
+      <h4>Contextual Retrieval</h4>
+      <ul>
+        <li>Each chunk carries its own context</li>
+        <li>Unambiguous and self-contained</li>
+        <li>49% fewer retrieval failures</li>
+        <li>Significantly reduced hallucinations</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Anthropic's Answer: Contextual Retrieval</h2>
+
+  <p>Anthropic's <strong>Contextual Retrieval</strong> technique solves the context conundrum by having Claude itself annotate every chunk before it is indexed. The process uses a prompt like this:</p>
+
+  <div class="code-wrap">
+    <div class="code-label">Anthropic's Contextualization Prompt</div>
+    <pre><span class="kw">&lt;document&gt;</span>
+<span class="str">{{WHOLE_DOCUMENT}}</span>
+<span class="kw">&lt;/document&gt;</span>
+
+Here is the chunk we want to situate within the whole document:
+<span class="kw">&lt;chunk&gt;</span>
+<span class="str">{{CHUNK_CONTENT}}</span>
+<span class="kw">&lt;/chunk&gt;</span>
+
+<span class="cm">Please give a short succinct context to situate this chunk within
+the overall document for improving search retrieval. Answer only
+with the succinct context and nothing else.</span></pre>
+  </div>
+
+  <p>Claude responds with a concise 50–100 token description of where this chunk sits within its document. That description is then <strong>prepended to the chunk</strong> before embedding. The resulting contextualized chunk looks like:</p>
+
+  <div class="code-wrap">
+    <div class="code-label">Contextualized Chunk</div>
+    <pre><span class="cm">This chunk is from an SEC filing on ACME Corp's performance in Q2
+2023; the previous quarter's revenue was $314 million.</span>
+<span class="str">"The company's revenue grew by 3% over the previous quarter."</span></pre>
+  </div>
+
+  <p>Now the chunk is self-contained and unambiguous. When embedded, its vector reflects both the original content <em>and</em> its document context. The same contextual text is also fed into the BM25 index, boosting exact-match retrieval too.</p>
+
+  <h2>The Full RAG Pipeline — Step by Step</h2>
+
+  <div class="pipeline">
+    <div class="pipeline-step">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <strong>Ingest &amp; Chunk</strong>
+        <p>Split source documents into chunks of appropriate size using a strategy suited to your content type.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <strong>Contextualize with Claude</strong>
+        <p>Pass each chunk + its parent document to Claude. Claude prepends a 50–100 token situational context. Use prompt caching to pass the document once, not once per chunk.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <strong>Build Dual Indexes</strong>
+        <p>Create semantic embeddings of contextualized chunks and store in a vector database. Simultaneously build a BM25 lexical index over the same chunks.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <strong>Retrieve at Query Time</strong>
+        <p>Embed the user's query. Run both semantic search and BM25 search in parallel. Merge results with rank fusion, deduplicate, select top-K.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <strong>Rerank (Optional but Powerful)</strong>
+        <p>Pass top-K candidates through a cross-encoder reranker for a final precision boost. This is where the biggest accuracy gains happen.</p>
+      </div>
+    </div>
+    <div class="pipeline-step">
+      <div class="step-num">6</div>
+      <div class="step-content">
+        <strong>Augment &amp; Generate</strong>
+        <p>Inject the final retrieved chunks into Claude's prompt alongside the user query. Claude generates a grounded, contextually accurate response.</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>The Numbers: How Much Better Is This?</h2>
+
+  <p>Anthropic benchmarked these techniques across multiple domains — codebases, ArXiv papers, fiction, and scientific papers — measuring the percentage of relevant chunks that fail to appear in the top-20 results (lower is better):</p>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-number">5.7%</div>
+      <div class="stat-label">Failure rate<br/>Traditional RAG (baseline)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">3.7%</div>
+      <div class="stat-label">Failure rate<br/>+ Contextual Embeddings (−35%)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">2.9%</div>
+      <div class="stat-label">Failure rate<br/>+ Contextual BM25 (−49%)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">1.9%</div>
+      <div class="stat-label">Failure rate<br/>+ Reranking (−67%)</div>
+    </div>
+  </div>
+
+  <p>A 67% reduction in retrieval failures is not a marginal improvement — it is the difference between a RAG system that users trust and one they quietly stop using.</p>
+
+  <h2>Cost Control: Prompt Caching to the Rescue</h2>
+
+  <p>The obvious objection to Contextual Retrieval is cost: if you need to pass the entire parent document to Claude for every chunk, and you have a million chunks, doesn't that get expensive?</p>
+
+  <p>This is where <strong>prompt caching</strong> makes Contextual Retrieval practical. Claude can cache a document in memory across multiple API calls. You load the document into the cache once, then reference that cache for every chunk within it — avoiding redundant token processing.</p>
+
+  <div class="callout">
+    <div class="callout-title">💰 Cost Estimate from Anthropic</div>
+    Assuming 800-token chunks, 8,000-token documents, 50-token instructions, and 100 tokens of context per chunk, the one-time cost to contextualize an entire knowledge base runs approximately <strong>$1.02 per million document tokens</strong> — a one-time preprocessing investment, not a recurring cost.
+  </div>
+
+  <h2>Implementing the Full RAG Flow in Python</h2>
+
+  <p>The Anthropic course walks through a complete Python implementation. Here's a simplified sketch of the indexing phase to illustrate the architecture:</p>
+
+  <div class="code-wrap">
+    <div class="code-label">Python — Contextual RAG Indexing (Simplified)</div>
+    <pre><span class="kw">import</span> anthropic
+<span class="kw">from</span> sentence_transformers <span class="kw">import</span> SentenceTransformer
+<span class="kw">from</span> rank_bm25 <span class="kw">import</span> BM25Okapi
+
+client = anthropic.<span class="fn">Anthropic</span>()
+embedder = SentenceTransformer(<span class="str">'all-MiniLM-L6-v2'</span>)
+
+<span class="kw">def</span> <span class="fn">add_context_to_chunk</span>(document: str, chunk: str) -> str:
+    <span class="cm">"""Use Claude to prepend situational context to a chunk."""</span>
+    response = client.messages.<span class="fn">create</span>(
+        model=<span class="str">"claude-haiku-4-5-20251001"</span>,
+        max_tokens=<span class="str">200</span>,
+        messages=[{
+            <span class="str">"role"</span>: <span class="str">"user"</span>,
+            <span class="str">"content"</span>: (
+                <span class="str">f"&lt;document&gt;\n{document}\n&lt;/document&gt;\n\n"</span>
+                <span class="str">f"&lt;chunk&gt;\n{chunk}\n&lt;/chunk&gt;\n\n"</span>
+                <span class="str">"Give a short context to situate this chunk "
+                 "within the overall document. Be succinct."</span>
+            )
+        }]
+    )
+    context = response.content[<span class="str">0</span>].text
+    <span class="kw">return</span> <span class="str">f"{context}\n\n{chunk}"</span>
+
+<span class="kw">def</span> <span class="fn">build_index</span>(documents: list[str], chunks_per_doc: list[list[str]]):
+    contextualized_chunks = []
+    <span class="kw">for</span> doc, chunks <span class="kw">in</span> <span class="fn">zip</span>(documents, chunks_per_doc):
+        <span class="kw">for</span> chunk <span class="kw">in</span> chunks:
+            ctx_chunk = <span class="fn">add_context_to_chunk</span>(doc, chunk)
+            contextualized_chunks.<span class="fn">append</span>(ctx_chunk)
+
+    <span class="cm"># Semantic index</span>
+    embeddings = embedder.<span class="fn">encode</span>(contextualized_chunks)
+
+    <span class="cm"># BM25 lexical index</span>
+    tokenized = [c.<span class="fn">split</span>() <span class="kw">for</span> c <span class="kw">in</span> contextualized_chunks]
+    bm25 = <span class="fn">BM25Okapi</span>(tokenized)
+
+    <span class="kw">return</span> embeddings, bm25, contextualized_chunks</pre>
+  </div>
+
+  <h2>When RAG Isn't Enough: Agentic Search</h2>
+
+  <p>The Anthropic course goes one step further, exploring <strong>agentic search</strong> — where Claude doesn't just passively receive retrieved chunks, but actively decides what to search for, evaluates the results, and iterates if needed.</p>
+
+  <p>In an agentic RAG setup, Claude is given the retrieval system as a <em>tool</em>. It can call that tool multiple times with different queries, reason about what it found, and decide when it has enough information to answer confidently. This transforms RAG from a one-shot retrieval system into a dynamic research loop.</p>
+
+  <div class="callout">
+    <div class="callout-title">🔗 This Connects to MCP</div>
+    The Model Context Protocol (MCP) covered later in the course standardizes how Claude exposes and consumes retrieval tools — making it easier to build agentic RAG systems that plug into any knowledge base through a unified interface.
+  </div>
+
+  <h2>Real-World Use Cases</h2>
+
+  <p><strong>Customer support chatbots</strong> that answer questions using your live product documentation — not hallucinated policies.</p>
+
+  <p><strong>Legal and financial analysis tools</strong> that surface relevant case law or filings, with every claim traceable to a source chunk. Combined with Claude's Citations feature, each answer can be footnoted automatically.</p>
+
+  <p><strong>Code-aware assistants</strong> that retrieve from your codebase at query time, understanding which modules and functions are relevant — without needing the entire repo in context.</p>
+
+  <p><strong>Internal knowledge bases</strong> where employee questions get answered from company wikis, HR policies, and internal guides rather than general internet knowledge.</p>
+
+  <div class="divider">· · ·</div>
+
+  <h2>Key Takeaways</h2>
+
+  <p>RAG is not a single technique — it is a pipeline with multiple stages, each of which can be tuned for your use case. The Anthropic course teaches the full stack: chunking strategies, semantic embeddings, BM25 lexical search, and the multi-index hybrid pipeline that combines them.</p>
+
+  <p>Anthropic's own Contextual Retrieval innovation adds a layer that most RAG tutorials skip: using Claude to give every chunk its own situational context before it is indexed. The result is a system that retrieves the right chunks far more reliably — <strong>67% fewer failures</strong> when combined with reranking.</p>
+
+  <div class="pull-quote">The best RAG system is one where the model retrieves confidently, answers accurately, and hallucinates never.</div>
+
+  <p>Whether you are building a customer-facing chatbot, an internal knowledge tool, or a complex agentic research system, the foundations covered in Anthropic's official course give you everything you need to do it right.</p>
+
+  <div class="tags">
+    <span class="tag">Artificial Intelligence</span>
+    <span class="tag">RAG</span>
+    <span class="tag">Claude API</span>
+    <span class="tag">Anthropic</span>
+    <span class="tag">Machine Learning</span>
+    <span class="tag">LLM</span>
+    <span class="tag">Python</span>
+    <span class="tag">NLP</span>
+  </div>
+
+</div>
+</body>
+</html>
